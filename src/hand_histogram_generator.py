@@ -16,6 +16,7 @@ Dependencies: OpenCV, NumPy, pickle
 import cv2
 import numpy as np
 import pickle
+import os
 
 
 def draw_sampling_grid(frame):
@@ -131,9 +132,13 @@ def capture_hand_histogram():
 
     # Save histogram
     if hand_histogram is not None:
-        with open("hand_histogram.pkl", "wb") as f:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        save_path = os.path.join(script_dir, "hand_histogram.pkl")
+
+        with open(save_path, "wb") as f:
             pickle.dump(hand_histogram, f)
-        print("Histogram file saved as 'hand_histogram.pkl'")
+
+        print(f"Histogram file saved successfully at: {save_path}")
 
 
 if __name__ == "__main__":
