@@ -1,16 +1,13 @@
 """
-Hand Color Histogram Generator for Sign Language Recognition
--------------------------------------------------------------
-This script helps you capture the color distribution (histogram)
-of your hand in HSV space, which is later used for hand segmentation.
+Hand Histogram Generator for Sign Language Recognition
+------------------------------------------------------
+Captures a clean hand color histogram using an external camera.
+Use this histogram for accurate hand segmentation in gesture datasets.
 
-Steps:
-1. Run this file.
-2. Place your hand inside the green boxes on screen.
-3. Press 'c' to capture the histogram of your hand skin tone.
-4. Press 's' to save and exit.
-
-Dependencies: OpenCV, NumPy, pickle
+Controls:
+  c - capture histogram from sampling grid
+  h - capture histogram from full ROI
+  s - save and exit
 """
 
 import cv2
@@ -19,126 +16,127 @@ import pickle
 import os
 
 
-def draw_sampling_grid(frame):
-    """
-    Draws multiple small green boxes on the screen
-    to sample pixels from different parts of the hand.
-    
-    Args:
-        frame (numpy.ndarray): The current video frame.
-    Returns:
-        numpy.ndarray: The stacked cropped regions containing color samples.
-    """
-    # Starting coordinates (top-left corner)
-    start_x, start_y = 420, 140
-    box_w, box_h = 10, 10
-    gap = 10
+def get_external_camera():
+    """Prefer external camera (index 1), fallback to 0 or 2."""
+    print("Attempting to open external camera...")
+    for idx in [1, 0, 2]:
+        cam = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+        if cam.isOpened():
+            ret, frame = cam.read()
+            if ret:
+                print(f"Using camera index {idx}")
+                return cam
+        cam.release()
+    print("No available camera found.")
+    return None
 
-    # Initialize placeholders
-    row_samples = None
+
+def equalize_brightness(frame):
+    """Apply CLAHE to reduce lighting variation."""
+    lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    l = clahe.apply(l)
+    lab = cv2.merge((l, a, b))
+    return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+
+
+def draw_sampling_grid(frame, start_x=360, start_y=120, box_w=25, box_h=25, gap=10):
+    """Draw grid boxes and return stacked sampled pixels."""
     full_sample = None
-
-    for row in range(10):
-        for col in range(5):
-            x1 = start_x + col * (box_w + gap)
-            y1 = start_y + row * (box_h + gap)
-            region = frame[y1:y1 + box_h, x1:x1 + box_w]
-
-            # Stack boxes horizontally (row-wise)
-            if row_samples is None:
-                row_samples = region
-            else:
-                row_samples = np.hstack((row_samples, region))
-
-            # Draw the rectangle grid on the frame
-            cv2.rectangle(frame, (x1, y1), (x1 + box_w, y1 + box_h), (0, 255, 0), 1)
-
-        # Stack all rows vertically
-        if full_sample is None:
-            full_sample = row_samples
-        else:
-            full_sample = np.vstack((full_sample, row_samples))
-        # Reset for next row
-        row_samples = None  
-
+    for i in range(6):
+        row_sample = None
+        for j in range(5):
+            x, y = start_x + j * (box_w + gap), start_y + i * (box_h + gap)
+            roi = frame[y:y + box_h, x:x + box_w]
+            row_sample = roi if row_sample is None else np.hstack((row_sample, roi))
+            cv2.rectangle(frame, (x, y), (x + box_w, y + box_h), (0, 255, 0), 1)
+        full_sample = row_sample if full_sample is None else np.vstack((full_sample, row_sample))
     return full_sample
 
 
 def capture_hand_histogram():
-    """
-    Captures and stores the HSV histogram of a user's hand skin tone
-    using a webcam feed. The histogram can later be used for
-    hand segmentation in gesture recognition models.
-    """
-    # Try opening the default camera (prefers external if available)
-    cam = cv2.VideoCapture(1)
-    if not cam.isOpened():
-        cam = cv2.VideoCapture(0)
+    cam = get_external_camera()
+    if cam is None:
+        return
 
-    # Flags to manage capture flow
-    histogram_captured = False
-    histogram_saved = False
-    hand_sample = None
-    hand_histogram = None
+    print("Press 'c' (grid) | 'h' (ROI) | 's' (save & exit)")
 
-    print("Press 'c' to capture hand histogram | 's' to save and exit")
+    hist = None
+    captured = False
+    x, y, w, h = 280, 80, 340, 360
 
     while True:
         ret, frame = cam.read()
         if not ret:
-            print("Could not access camera.")
+            print("Camera read failed.")
             break
 
-        frame = cv2.flip(frame, 1)  # Mirror for natural interaction
+        frame = cv2.flip(frame, 1)
         frame = cv2.resize(frame, (640, 480))
-        hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        frame = equalize_brightness(frame)
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
         key = cv2.waitKey(1) & 0xFF
+        cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        hand_sample = draw_sampling_grid(frame)
 
-        # Capture histogram when 'c' is pressed
         if key == ord('c') and hand_sample is not None:
             hsv_sample = cv2.cvtColor(hand_sample, cv2.COLOR_BGR2HSV)
-            hand_histogram = cv2.calcHist([hsv_sample], [0, 1], None, [180, 256], [0, 180, 0, 256])
-            cv2.normalize(hand_histogram, hand_histogram, 0, 255, cv2.NORM_MINMAX)
-            histogram_captured = True
-            print("Histogram captured successfully.")
+            hist = cv2.calcHist([hsv_sample], [0, 1], None, [180, 256], [0, 180, 0, 256])
+            cv2.normalize(hist, hist, 0, 255, cv2.NORM_MINMAX)
+            captured = True
+            print("Histogram captured from grid.")
 
-        # Exit when 's' is pressed
-        elif key == ord('s'):
-            histogram_saved = True
-            print("Histogram saved. Exiting...")
+        if key == ord('h'):
+            roi = frame[y:y + h, x:x + w]
+            hsv_sample = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+            hist = cv2.calcHist([hsv_sample], [0, 1], None, [180, 256], [0, 180, 0, 256])
+            cv2.normalize(hist, hist, 0, 255, cv2.NORM_MINMAX)
+            captured = True
+            print("Histogram captured from full ROI.")
+
+        if captured and hist is not None:
+            back_proj = cv2.calcBackProject([hsv], [0, 1], hist, [0, 180, 0, 256], 1)
+            lower_skin = np.array([0, 25, 30], dtype=np.uint8)
+            upper_skin = np.array([179, 170, 255], dtype=np.uint8)
+            skin_mask = cv2.inRange(hsv, lower_skin, upper_skin)
+            back_proj = cv2.bitwise_and(back_proj, back_proj, mask=skin_mask)
+
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+            back_proj = cv2.filter2D(back_proj, -1, kernel)
+            back_proj = cv2.GaussianBlur(back_proj, (7, 7), 0)
+            back_proj = cv2.medianBlur(back_proj, 7)
+            _, mask = cv2.threshold(back_proj, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            clean_mask = np.zeros_like(mask)
+            for cnt in contours:
+                if cv2.contourArea(cnt) > 3000:
+                    cv2.drawContours(clean_mask, [cnt], -1, 255, cv2.FILLED)
+            mask = clean_mask
+
+            mask_display = cv2.merge((mask, mask, mask))
+            cv2.imshow("Thresh", mask_display)
+
+        cv2.imshow("Set Hand Histogram", frame)
+
+        if key == ord('s'):
+            print("Saving histogram and exiting...")
             break
 
-        # Once histogram captured, visualize backprojection
-        if histogram_captured:
-            back_proj = cv2.calcBackProject([hsv_frame], [0, 1], hand_histogram, [0, 180, 0, 256], 1)
-            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (10, 10))
-            cv2.filter2D(back_proj, -1, kernel, back_proj)
-            blur = cv2.GaussianBlur(back_proj, (11, 11), 0)
-            blur = cv2.medianBlur(blur, 15)
-            _, mask = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            mask_3ch = cv2.merge((mask, mask, mask))
-            cv2.imshow("Hand Mask Preview", mask_3ch)
-
-        # Draw sampling grid if histogram not yet saved
-        if not histogram_saved:
-            hand_sample = draw_sampling_grid(frame)
-
-        cv2.imshow("Hand Histogram Setup", frame)
-
-    # Cleanup
     cam.release()
     cv2.destroyAllWindows()
 
-    # Save histogram
-    if hand_histogram is not None:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        save_path = os.path.join(script_dir, "hand_histogram.pkl")
-
+    if hist is not None:
+        save_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hist")
         with open(save_path, "wb") as f:
-            pickle.dump(hand_histogram, f)
-
-        print(f"Histogram file saved successfully at: {save_path}")
+            pickle.dump(hist, f)
+        print(f"Histogram saved to: {save_path}")
+    else:
+        print("No histogram captured.")
 
 
 if __name__ == "__main__":
