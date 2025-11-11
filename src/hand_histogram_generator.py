@@ -2,7 +2,7 @@
 Hand Histogram Generator for Sign Language Recognition
 ------------------------------------------------------
 Captures a clean hand color histogram using an external camera.
-Use this histogram for accurate hand segmentation in gesture datasets.
+All processing and segmentation are limited to the drawn ROI box.
 
 Controls:
   c - capture histogram from sampling grid
@@ -64,7 +64,7 @@ def capture_hand_histogram():
 
     hist = None
     captured = False
-    x, y, w, h = 280, 80, 340, 360
+    x, y, w, h = 280, 80, 340, 360  # ROI coordinates
 
     while True:
         ret, frame = cam.read()
@@ -75,12 +75,20 @@ def capture_hand_histogram():
         frame = cv2.flip(frame, 1)
         frame = cv2.resize(frame, (640, 480))
         frame = equalize_brightness(frame)
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
+        # Draw ROI box
+        cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+        # Get ROI region only
+        roi = frame[y:y + h, x:x + w]
+        hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
 
         key = cv2.waitKey(1) & 0xFF
-        cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+        # Draw grid inside ROI
         hand_sample = draw_sampling_grid(frame)
 
+        # Capture histogram from grid
         if key == ord('c') and hand_sample is not None:
             hsv_sample = cv2.cvtColor(hand_sample, cv2.COLOR_BGR2HSV)
             hist = cv2.calcHist([hsv_sample], [0, 1], None, [180, 256], [0, 180, 0, 256])
@@ -88,21 +96,24 @@ def capture_hand_histogram():
             captured = True
             print("Histogram captured from grid.")
 
+        # Capture histogram from ROI
         if key == ord('h'):
-            roi = frame[y:y + h, x:x + w]
-            hsv_sample = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-            hist = cv2.calcHist([hsv_sample], [0, 1], None, [180, 256], [0, 180, 0, 256])
+            hist = cv2.calcHist([hsv_roi], [0, 1], None, [180, 256], [0, 180, 0, 256])
             cv2.normalize(hist, hist, 0, 255, cv2.NORM_MINMAX)
             captured = True
             print("Histogram captured from full ROI.")
 
+        # Process only the ROI
         if captured and hist is not None:
-            back_proj = cv2.calcBackProject([hsv], [0, 1], hist, [0, 180, 0, 256], 1)
+            back_proj = cv2.calcBackProject([hsv_roi], [0, 1], hist, [0, 180, 0, 256], 1)
+
+            # Skin-tone constraint
             lower_skin = np.array([0, 25, 30], dtype=np.uint8)
             upper_skin = np.array([179, 170, 255], dtype=np.uint8)
-            skin_mask = cv2.inRange(hsv, lower_skin, upper_skin)
+            skin_mask = cv2.inRange(hsv_roi, lower_skin, upper_skin)
             back_proj = cv2.bitwise_and(back_proj, back_proj, mask=skin_mask)
 
+            # Smooth and clean
             kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
             back_proj = cv2.filter2D(back_proj, -1, kernel)
             back_proj = cv2.GaussianBlur(back_proj, (7, 7), 0)
@@ -111,6 +122,7 @@ def capture_hand_histogram():
             mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
             mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
 
+            # Keep only large areas (the hand)
             contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             clean_mask = np.zeros_like(mask)
             for cnt in contours:
@@ -118,7 +130,11 @@ def capture_hand_histogram():
                     cv2.drawContours(clean_mask, [cnt], -1, 255, cv2.FILLED)
             mask = clean_mask
 
-            mask_display = cv2.merge((mask, mask, mask))
+            # Place the ROI mask back into the full frame
+            mask_full = np.zeros((frame.shape[0], frame.shape[1]), dtype=np.uint8)
+            mask_full[y:y + h, x:x + w] = mask
+            mask_display = cv2.merge((mask_full, mask_full, mask_full))
+
             cv2.imshow("Thresh", mask_display)
 
         cv2.imshow("Set Hand Histogram", frame)
