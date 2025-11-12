@@ -1,26 +1,24 @@
 """
 Gesture CNN Trainer
 -------------------
-This script builds, trains, and evaluates a Convolutional Neural Network (CNN)
-for recognizing hand gestures captured in grayscale images.
+This script builds, trains, and evaluates a Convolutional Neural Network (CNN) for recognizing hand gestures captured in grayscale images.
 
 Workflow:
 1. Ensure your gesture dataset is prepared using the dataset preparer script:
-       train_images, train_labels, val_images, val_labels
+   train_images, train_labels, val_images, val_labels
 2. Ensure the "gestures" directory exists with subfolders named by gesture IDs:
-       gestures/1/, gestures/2/, gestures/3/, etc.
+   gestures/1/, gestures/2/, gestures/3/, etc.
 3. The script:
    - Determines input image dimensions dynamically.
    - Builds a CNN with 3 convolutional layers.
    - Trains on the prepared dataset.
-   - Automatically saves the best model to `cnn_model_keras2.h5`.
+   - Automatically saves the best model to cnn_model_keras2.h5.
 
 Outputs:
-    - Saved Keras model file: cnn_model_keras2.h5
-    - Console summary of training accuracy and final validation error.
+- Saved Keras model file: cnn_model_keras2.h5
+- Console summary of training accuracy and final validation error.
 
-Dependencies:
-    TensorFlow / Keras, NumPy, OpenCV, Pickle, Glob, OS
+Dependencies: TensorFlow / Keras, NumPy, OpenCV, Pickle, Glob, OS
 """
 
 import os
@@ -28,31 +26,16 @@ import cv2
 import numpy as np
 import pickle
 from glob import glob
+
 from tensorflow.keras import optimizers
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, Flatten, Conv2D, MaxPooling2D
 from tensorflow.keras.utils import to_categorical
 from tensorflow.keras.callbacks import ModelCheckpoint
-
-# Extra callbacks for better training control
-from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, CSVLogger
 from tensorflow.keras import backend as K
-
-# (optional) metrics at the end
-try:
-    from sklearn.metrics import classification_report, confusion_matrix  
-    _HAS_SKLEARN = True
-except Exception:
-    _HAS_SKLEARN = False
 
 # Silence TensorFlow warnings for cleaner output
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-
-# Reproducibility
-import random  
-import tensorflow as tf 
-SEED = int(os.environ.get("SEED", 42)) 
-random.seed(SEED); np.random.seed(SEED); tf.random.set_seed(SEED)  
 
 
 # ===============================================================
@@ -62,7 +45,6 @@ random.seed(SEED); np.random.seed(SEED); tf.random.set_seed(SEED)
 def get_image_size():
     """Detect image size dynamically from the first available gesture image."""
     gesture_dir = "gestures"
-
     if not os.path.exists(gesture_dir):
         raise FileNotFoundError(f"'{gesture_dir}' directory not found.")
 
@@ -70,7 +52,6 @@ def get_image_size():
         [g for g in os.listdir(gesture_dir) if os.path.isdir(os.path.join(gesture_dir, g))],
         key=lambda x: int(x) if x.isdigit() else x
     )
-
     for folder in gesture_folders:
         folder_path = os.path.join(gesture_dir, folder)
         for img_name in os.listdir(folder_path):
@@ -79,7 +60,6 @@ def get_image_size():
                 img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
                 if img is not None:
                     return img.shape
-
     raise FileNotFoundError("No valid gesture images found to determine input size.")
 
 
@@ -88,9 +68,7 @@ def get_num_of_classes():
     gesture_dir = "gestures"
     if not os.path.exists(gesture_dir):
         raise FileNotFoundError(f"'{gesture_dir}' directory not found.")
-
-    class_folders = [f for f in os.listdir(gesture_dir)
-                     if os.path.isdir(os.path.join(gesture_dir, f))]
+    class_folders = [f for f in os.listdir(gesture_dir) if os.path.isdir(os.path.join(gesture_dir, f))]
     return len(class_folders)
 
 
@@ -118,41 +96,26 @@ def build_cnn_model(image_x, image_y, num_classes):
     model.add(Dropout(0.2))
     model.add(Dense(num_classes, activation='softmax'))
 
-    # Keep SGD but make it stronger (momentum, nesterov, grad clipping)
-    optimizer = optimizers.SGD(learning_rate=1e-2, momentum=0.9, nesterov=True, clipnorm=1.0)  
-
-    # Enable light label smoothing for better generalization
-    loss = tf.keras.losses.CategoricalCrossentropy(label_smoothing=0.05) 
-
-    model.compile(loss=loss, optimizer=optimizer, metrics=['accuracy'])
+    # Optimizer and compilation
+    optimizer = optimizers.SGD(learning_rate=1e-2)
+    model.compile(loss='categorical_crossentropy', optimizer=optimizer, metrics=['accuracy'])
 
     # Model checkpoint to save the best-performing model
     checkpoint_path = "cnn_model_keras2.h5"
     checkpoint = ModelCheckpoint(
-        checkpoint_path, monitor='val_accuracy', verbose=1, save_best_only=True, mode='max'
+        checkpoint_path,
+        monitor='val_accuracy',
+        verbose=1,
+        save_best_only=True,
+        mode='max'
     )
 
-    # Add EarlyStopping and ReduceLROnPlateau + simple CSV log
-    early_stop = EarlyStopping(monitor='val_accuracy', mode='max', patience=10,
-                               restore_best_weights=True, verbose=1)  
-    lr_plateau = ReduceLROnPlateau(monitor='val_loss', mode='min', patience=4,
-                                   factor=0.5, min_lr=1e-6, verbose=1)  
-    csv_log = CSVLogger('training_log.csv', append=False)  
-
-    # return all callbacks together
-    return model, [checkpoint, early_stop, lr_plateau, csv_log]  
+    return model, [checkpoint]
 
 
 # ===============================================================
 # Training Routine
 # ===============================================================
-
-def _compute_class_weights(y_int, num_classes): 
-    """Compute simple inverse-frequency class weights."""
-    counts = np.bincount(y_int, minlength=num_classes)
-    counts = np.maximum(counts, 1)
-    weights = counts.sum() / (num_classes * counts.astype(np.float32))
-    return {i: float(weights[i]) for i in range(num_classes)}
 
 def train_cnn_model():
     """Train the CNN model using pre-saved gesture datasets."""
@@ -166,7 +129,6 @@ def train_cnn_model():
         train_images = np.array(pickle.load(f))
     with open("train_labels", "rb") as f:
         train_labels = np.array(pickle.load(f), dtype=np.int32)
-
     with open("val_images", "rb") as f:
         val_images = np.array(pickle.load(f))
     with open("val_labels", "rb") as f:
@@ -179,30 +141,17 @@ def train_cnn_model():
     # Reshape and normalize image data
     train_images = np.reshape(train_images, (train_images.shape[0], image_x, image_y, 1))
     val_images = np.reshape(val_images, (val_images.shape[0], image_x, image_y, 1))
+
     train_images = train_images.astype('float32') / 255.0
     val_images = val_images.astype('float32') / 255.0
 
-    # Optional dataset standardization (helps with lighting changes)
-    mean = np.mean(train_images, axis=(0,1,2), keepdims=True) 
-    std = np.std(train_images, axis=(0,1,2), keepdims=True) + 1e-7 
-    train_images = (train_images - mean) / std 
-    val_images = (val_images - mean) / std 
+    # Adjust labels to start at 0 for Keras
+    train_labels = train_labels - np.min(train_labels)
+    val_labels = val_labels - np.min(val_labels)
 
-    # CHANGED: Use one global offset so train/val stay aligned
-    global_min = min(int(train_labels.min()), int(val_labels.min())) 
-    train_labels = train_labels - global_min 
-    val_labels = val_labels - global_min 
-
-    # Sanity-check label range vs num_classes
-    if train_labels.max() >= num_classes or val_labels.max() >= num_classes:
-        raise ValueError(
-            f"Label index out of range. Max train={train_labels.max()}, "
-            f"max val={val_labels.max()}, num_classes={num_classes}."
-        )  
-
-    # One-hot encode labels
-    train_labels_1h = to_categorical(train_labels, num_classes)
-    val_labels_1h = to_categorical(val_labels, num_classes)
+    # One-hot encode labels using TensorFlow's to_categorical
+    train_labels = to_categorical(train_labels, num_classes)
+    val_labels = to_categorical(val_labels, num_classes)
 
     # Display summary of dataset
     print(f"\nTraining dataset: {train_images.shape[0]} samples")
@@ -214,42 +163,20 @@ def train_cnn_model():
     model, callbacks_list = build_cnn_model(image_x, image_y, num_classes)
     model.summary()
 
-    # handle class imbalance automatically (can be disabled by env var)
-    use_class_weights = os.environ.get("USE_CLASS_WEIGHTS", "1") == "1"  
-    class_weight = None  
-    if use_class_weights:
-        class_weight = _compute_class_weights(train_labels, num_classes)  
-        print("Class weights:", class_weight)  
-
-    # smaller, safer default batch size (still configurable)
-    batch_size = int(os.environ.get("BATCH_SIZE", "128")) 
-    epochs = int(os.environ.get("EPOCHS", "100"))  # keep your 100 default
-
-    history = model.fit(
-        train_images, train_labels_1h,
-        validation_data=(val_images, val_labels_1h),
-        epochs=epochs,
-        batch_size=batch_size,
+    model.fit(
+        train_images,
+        train_labels,
+        validation_data=(val_images, val_labels),
+        epochs=30,
+        batch_size=500,
         callbacks=callbacks_list,
-        verbose=1,
-        shuffle=True,                
-        class_weight=class_weight    
+        verbose=1
     )
 
     # Evaluate final model performance
-    scores = model.evaluate(val_images, val_labels_1h, verbose=0)
+    scores = model.evaluate(val_images, val_labels, verbose=0)
     print(f"\nValidation Accuracy: {scores[1] * 100:.2f}%")
     print(f"Validation Error: {100 - scores[1] * 100:.2f}%")
-
-    # optional per-class report & confusion matrix
-    if _HAS_SKLEARN:
-        preds = model.predict(val_images, verbose=0)
-        y_true = val_labels
-        y_pred = np.argmax(preds, axis=1)
-        print("\nPer-class metrics:")
-        print(classification_report(y_true, y_pred, digits=4))
-        print("Confusion matrix:")
-        print(confusion_matrix(y_true, y_pred))
 
     K.clear_session()
 
@@ -257,6 +184,5 @@ def train_cnn_model():
 # ===============================================================
 # Main Execution
 # ===============================================================
-
 if __name__ == "__main__":
     train_cnn_model()
