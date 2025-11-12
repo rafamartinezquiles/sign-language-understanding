@@ -12,7 +12,7 @@ Workflow:
 3. Enter gesture ID and name.
 4. Place your hand inside the ROI (green box).
 5. Press 'C' to start capturing, 'C' again to pause.
-6. Automatically saves 200 processed gesture images to:
+6. Automatically saves 1000 processed gesture images to:
        gestures/<gesture_id>/
 
 Features:
@@ -39,7 +39,7 @@ import sqlite3
 
 IMG_WIDTH, IMG_HEIGHT = 50, 50
 ROI_X, ROI_Y, ROI_W, ROI_H = 360, 120, 180, 240
-TOTAL_IMAGES = 200
+TOTAL_IMAGES = 1000
 
 
 # ===============================================================
