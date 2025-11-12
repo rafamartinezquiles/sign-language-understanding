@@ -6,7 +6,7 @@ This project leverages machine learning algorithms, including Ultralytics, PyTor
 Recognizing sign language in real time represents one of the most impactful applications of modern computer vision and deep learning. The task involves detecting the hands and body posture of a signer from a live video stream, interpreting their gestures, and translating them into meaningful text or speech. Unlike static object detection, this process demands high temporal precision, gesture segmentation, and adaptability to variations in lighting, skin tones, and hand orientation.
 
 Across the globe, over 70 million deaf and hard-of-hearing individuals rely on sign language as their primary means of communication (World Federation of the Deaf, 2023). However, accessibility barriers persist, especially in education, customer service, and healthcare, where real-time human interpreters are not always available. By enabling computers to interpret sign language directly, we can dramatically reduce communication gaps and foster inclusivity across digital and physical environments.
-![](images/new_video_showing demo)
+![](images/demo.jpg)
 
 ## Table of Contents
 ```
