@@ -14,6 +14,7 @@ sign-language-understanding
 |__ images
 |   |__ general_image.png 
 |   |__ demo.jpg
+|   |__ full_img.jpg
 |__ src
     |__ gesture_collage_generator.py
     |__ gesture_data_collector.py
@@ -23,6 +24,8 @@ sign-language-understanding
     |__ pickle_gesture_dataset.py
     |__ train_cnn_model.py
 README.md
+cnn_model_keras2.h5
+gesture_db.db
 requirements.txt
 LICENSE
 ```
