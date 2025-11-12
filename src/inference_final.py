@@ -20,6 +20,7 @@ Requirements in the repository:
 
 import os
 import cv2
+import time
 import pickle
 import sqlite3
 import pyttsx3
@@ -34,7 +35,9 @@ from tensorflow.keras.models import load_model
 MODEL_PATH = "cnn_model_keras2.h5"
 
 # Use the SAME ROI as your histogram generator
-ROI_X, ROI_Y, ROI_W, ROI_H = 360, 120, 180, 240
+ROI_X, ROI_Y, ROI_W, ROI_H = 360, 120, 180, 240  # x,y,width,height (on a 640x480 frame)
+
+FRAME_W, FRAME_H = 640, 480  # target capture/display size
 
 # ===============================================================
 # Initialization
@@ -83,7 +86,7 @@ def equalize_brightness(bgr):
     return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
 def get_image_size():
-    """Infer input image size from the first valid grayscale image in gestures/."""
+    """Infer input image size (height, width) from the first valid grayscale image in gestures/."""
     base_dir = "gestures"
     if not os.path.exists(base_dir):
         raise FileNotFoundError(f"'{base_dir}' directory not found.")
@@ -96,15 +99,19 @@ def get_image_size():
             if name.lower().endswith(".jpg"):
                 img = cv2.imread(os.path.join(fpath, name), cv2.IMREAD_GRAYSCALE)
                 if img is not None:
-                    return img.shape
+                    h, w = img.shape[:2]
+                    return h, w
     raise FileNotFoundError("No sample gesture image found to determine input size.")
 
-image_x, image_y = get_image_size()
+image_h, image_w = get_image_size()
 
-def preprocess_image(img):
-    img = cv2.resize(img, (image_x, image_y))
+def preprocess_image(img_gray):
+    """Resize grayscale image to model input and add batch/channel dims."""
+    if len(img_gray.shape) == 3:
+        img_gray = cv2.cvtColor(img_gray, cv2.COLOR_BGR2GRAY)
+    img = cv2.resize(img_gray, (image_w, image_h))  # (width, height)
     img = img.astype(np.float32)
-    img = np.reshape(img, (1, image_x, image_y, 1))
+    img = np.reshape(img, (1, image_h, image_w, 1))  # N,H,W,C
     return img
 
 def keras_predict(img_gray):
@@ -121,12 +128,12 @@ def get_label_from_db(class_id):
     return row[0] if row else "Unknown"
 
 def say_text(text):
-    """Non-blocking text-to-speech, guarded by is_voice_on flag."""
+    """Non-blocking text-to-speech, guarded by is_voice_on flag with polite waiting."""
     global is_voice_on
     if not is_voice_on:
         return
     while getattr(engine, "_inLoop", False):
-        pass
+        time.sleep(0.01)
     engine.say(text)
     engine.runAndWait()
 
@@ -144,20 +151,26 @@ def open_camera():
         cam = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
         if cam.isOpened():
             # Request resolution
-            cam.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cam.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_W)
+            cam.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_H)
 
             # Try to disable autofocus and set a mid focus value if supported
             cam.set(cv2.CAP_PROP_AUTOFOCUS, 0)  # 0=off, 1=on (if driver supports)
             cam.set(cv2.CAP_PROP_FOCUS, 0)      # some drivers accept 0..255 or 0..1
-
-            # A tiny sharpen to counter mild defocus from driver scaling
             return cam
     return None
 
 # ===============================================================
 # Segmentation (aligned with your histogram generator)
 # ===============================================================
+
+def _safe_roi_coords():
+    """Clamp ROI to frame bounds after resizing to FRAME_W x FRAME_H."""
+    x0 = max(0, min(ROI_X, FRAME_W - 1))
+    y0 = max(0, min(ROI_Y, FRAME_H - 1))
+    x1 = max(x0 + 1, min(ROI_X + ROI_W, FRAME_W))
+    y1 = max(y0 + 1, min(ROI_Y + ROI_H, FRAME_H))
+    return x0, y0, x1, y1
 
 def segment_hand_roi(frame_bgr):
     """
@@ -167,12 +180,19 @@ def segment_hand_roi(frame_bgr):
       - Tight skin-range HSV mask
       - Morphological cleanup + filled contours
     Returns: (display_frame, filled_mask_in_roi, contours)
+    If the input frame is invalid, returns a safe black display and empty results.
     """
+    # Guard: bad frame from camera
+    if frame_bgr is None or not hasattr(frame_bgr, "size") or frame_bgr.size == 0:
+        safe_disp = np.zeros((FRAME_H, FRAME_W, 3), dtype=np.uint8)
+        safe_mask = np.zeros((ROI_H, ROI_W), dtype=np.uint8)
+        return safe_disp, safe_mask, []
+
     # Flip like the generator
     frame_bgr = cv2.flip(frame_bgr, 1)
 
     # Resize once for consistency
-    frame_bgr = cv2.resize(frame_bgr, (640, 480))
+    frame_bgr = cv2.resize(frame_bgr, (FRAME_W, FRAME_H))
 
     # Brightness normalization (CLAHE)
     frame_eq = equalize_brightness(frame_bgr)
@@ -180,13 +200,14 @@ def segment_hand_roi(frame_bgr):
     # HSV
     hsv = cv2.cvtColor(frame_eq, cv2.COLOR_BGR2HSV)
 
-    # ROI slice
-    roi = hsv[ROI_Y:ROI_Y + ROI_H, ROI_X:ROI_X + ROI_W]
+    # ROI slice (clamped)
+    x0, y0, x1, y1 = _safe_roi_coords()
+    roi = hsv[y0:y1, x0:x1]
 
     # Backprojection using histogram
     back_proj = cv2.calcBackProject([roi], [0, 1], hist, [0, 180, 0, 256], 1)
 
-    # Tight skin HSV range (same as generator you pasted)
+    # Tight skin HSV range
     lower_skin = np.array([0, 40, 70], dtype=np.uint8)
     upper_skin = np.array([20, 160, 255], dtype=np.uint8)
     skin_mask = cv2.inRange(roi, lower_skin, upper_skin)
@@ -217,7 +238,7 @@ def segment_hand_roi(frame_bgr):
 
     # Draw ROI on the display frame
     disp = frame_bgr.copy()
-    cv2.rectangle(disp, (ROI_X, ROI_Y), (ROI_X + ROI_W, ROI_Y + ROI_H), (0, 255, 0), 2)
+    cv2.rectangle(disp, (x0, y0), (x1, y1), (0, 255, 0), 2)
     return disp, filled, contours
 
 def predict_from_contour(contour, roi_mask):
@@ -250,6 +271,15 @@ def get_operator(pred_text):
 # Modes
 # ===============================================================
 
+def _safe_read(cam):
+    """Read a frame with one retry; returns (ok, frame_or_None)."""
+    ok, frame = cam.read()
+    if not ok or frame is None:
+        ok, frame = cam.read()
+        if not ok or frame is None:
+            return False, None
+    return True, frame
+
 def calculator_mode(cam):
     global is_voice_on
     flags = {"first": False, "operator": False, "second": False, "clear": False}
@@ -259,7 +289,7 @@ def calculator_mode(cam):
     Thread(target=say_text, args=(info,)).start()
 
     while True:
-        ok, frame = cam.read()
+        ok, frame = _safe_read(cam)
         if not ok:
             break
 
@@ -323,7 +353,7 @@ def calculator_mode(cam):
                         same_frames = 0
 
         # Draw UI
-        board = np.zeros((480, 640, 3), dtype=np.uint8)
+        board = np.zeros((FRAME_H, FRAME_W, 3), dtype=np.uint8)
         cv2.putText(board, "Calculator Mode", (100, 50), cv2.FONT_HERSHEY_TRIPLEX, 1.2, (255, 0, 0))
         cv2.putText(board, f"Predicted: {pred_text}", (30, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 0))
         cv2.putText(board, calc_text, (30, 240), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (255, 255, 255))
@@ -345,7 +375,7 @@ def text_mode(cam):
     same = 0
 
     while True:
-        ok, frame = cam.read()
+        ok, frame = _safe_read(cam)
         if not ok:
             break
 
@@ -370,7 +400,7 @@ def text_mode(cam):
                 Thread(target=say_text, args=(word,)).start()
                 word = ""
 
-        board = np.zeros((480, 640, 3), dtype=np.uint8)
+        board = np.zeros((FRAME_H, FRAME_W, 3), dtype=np.uint8)
         cv2.putText(board, "Text Mode", (200, 50), cv2.FONT_HERSHEY_TRIPLEX, 1.2, (255, 0, 0))
         cv2.putText(board, f"Predicted: {text}", (30, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 0))
         cv2.putText(board, word, (30, 240), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (255, 255, 255))
@@ -396,8 +426,8 @@ def recognize():
         if not cam.isOpened():
             raise RuntimeError("No camera available.")
 
-    # warm-up predict once
-    _ = model.predict(np.zeros((1, image_x, image_y, 1), dtype=np.float32), verbose=0)
+    # warm-up predict once with correct H,W
+    _ = model.predict(np.zeros((1, image_h, image_w, 1), dtype=np.float32), verbose=0)
 
     keypress = 1
     while True:
