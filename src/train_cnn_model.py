@@ -168,7 +168,7 @@ def train_cnn_model():
     model.fit(
         train_images, train_labels,
         validation_data=(val_images, val_labels),
-        epochs=15,
+        epochs=100,
         batch_size=500,
         callbacks=callbacks_list,
         verbose=1
