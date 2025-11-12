@@ -116,4 +116,8 @@ Use the following keyboard shortcuts to control the system:
 | **v** | Toggle voice feedback on/off |
 | **q** | Quit the application         |
 
+### References
+- Inspired of the Project: Shukla, M., Gupta, H., & Sharma, A. (2025). Sign Language Interpreter Using Deep Learning [Preprint]. Research Square. https://doi.org/10.21203/rs.3.rs-7465375/v1
+
+- Number of Deaf People in the World: https://www.who.int/news-room/fact-sheets/detail/deafness-and-hearing-loss
 
